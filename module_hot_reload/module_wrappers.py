@@ -57,7 +57,6 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
         return self._file_paths
 
     def get_file_paths(self) -> Set[Path]:
-        print('get_file_paths')
         if self.is_dir:
             file_paths = set(map(
                 lambda m: Path(m.__file__),
