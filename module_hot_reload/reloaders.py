@@ -134,6 +134,8 @@ class ManualReloader(ReloaderBase):
     Reload is done via importlib.reload(), read about reloaded modules' behaveour in the docs.
         https://docs.python.org/3/library/importlib.html#importlib.reload
     """
+    module_wrapper_class: ModuleWrapperBase = StandardModuleWrapper
+
     def register(self, module: T_mt_mwb):
         module = self.module_wrapper_class(module)
         self.can_register(module, raise_exception=True)
