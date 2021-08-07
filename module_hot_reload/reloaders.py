@@ -64,6 +64,7 @@ class ReloaderBase:
 class OnModifiedReloader(ReloaderBase):
     """
     Watches registered modules and reloads them on change.
+    Does not keep track of modules added during it's work.
     Reload is done via importlib.reload(), read about reloaded modules' behaveour in the docs.
         https://docs.python.org/3/library/importlib.html#importlib.reload
     """
@@ -114,11 +115,23 @@ class OnModifiedReloader(ReloaderBase):
 
 
 class NewModuleAwareOnModifiedReloader(OnModifiedReloader):
+    """
+    Watches registered modules and reloads them on change.
+    Keeps track of modules added during it's work.
+    Reload is done via importlib.reload(), read about reloaded modules' behaveour in the docs.
+        https://docs.python.org/3/library/importlib.html#importlib.reload
+    """
     module_wrapper_class = NewModuleAwareStandardModuleWrapper
     dir_handler = NewModuleAwareDirHandler
 
 
 class ManualReloader(ReloaderBase):
+    """
+    Basically a container for reloadable module wrappers that allows to reload
+    them all at once.
+    Reload is done via importlib.reload(), read about reloaded modules' behaveour in the docs.
+        https://docs.python.org/3/library/importlib.html#importlib.reload
+    """
     def register(self, module: T_mt_mwb):
         self.can_register(module, raise_exception=True)
 

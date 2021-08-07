@@ -13,6 +13,12 @@ T_mt_mwb = Union[ModuleType, 'ModuleWrapperBase']
 
 
 class ModuleWrapperMeta(type):
+    """
+    For each wrapped module keeps a single instance of each class
+    the module has been wrapped with.
+    Basically singleton but there is an instance per wrapped module.
+    Also contains one lock per wrapped module.
+    """
     _module_lock_mapping: T_mt_l = defaultdict(Lock)
     _modules_classes_instances: T_mt_t_mwb = defaultdict(dict)
 
@@ -82,6 +88,9 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
 
 
 class StandardModuleWrapper(ModuleWrapperBase):
+    """
+    Wraps a module. Does not keep track modules added after this class' instantiation
+    """
     def __init__(self, module: ModuleType):
         super().__init__(module)
         if self.is_file:
@@ -98,6 +107,9 @@ class StandardModuleWrapper(ModuleWrapperBase):
 
 
 class NewModuleAwareStandardModuleWrapper(ModuleWrapperBase):
+    """
+    Wraps a module. Keeps track modules added after this class' instantiation
+    """
     def __init__(self, module: ModuleType):
         super().__init__(module)
         self.file_paths_obsolete = False

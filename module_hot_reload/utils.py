@@ -3,6 +3,7 @@ from types import ModuleType
 
 
 def path_full_include(path_1: Path, path_2: Path) -> bool:
+    """Basically `(path_1 in path_2) or (path_2 in path_1)`"""
     path_1 = str(path_1.resolve())
     path_2 = str(path_2.resolve())
     return path_1 in path_2 or path_2 in path_1
