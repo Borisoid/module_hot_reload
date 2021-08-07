@@ -7,6 +7,7 @@ from typing import Dict, Set, Union
 
 from .utils import recursive_module_iterator
 
+
 T_mt_l = Dict[ModuleType, Lock]
 T_mt_t_mwb = Dict[ModuleType, Dict[type, 'ModuleWrapperBase']]
 T_mt_mwb = Union[ModuleType, 'ModuleWrapperBase']

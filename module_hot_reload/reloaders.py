@@ -16,6 +16,7 @@ from .watchdog_handlers import (
     NewModuleAwareDirHandler,
 )
 
+
 T_mt_mwb = Union[ModuleType, ModuleWrapperBase]
 
 

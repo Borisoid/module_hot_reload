@@ -8,6 +8,7 @@ from watchdog.events import (
     FileSystemMovedEvent,
 )
 
+
 action = Callable[[], None]
 
 
