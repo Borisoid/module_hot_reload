@@ -12,7 +12,7 @@ action = Callable[[], None]
 
 
 class FileModifiedHandler(FileSystemEventHandler):
-    def __init__(self, file_path: Union[str, Path], callback: action):
+    def __init__(self, callback: action, file_path: Union[str, Path]):
         self.file_path = str(file_path)
         self.callback = callback
         super().__init__()
@@ -25,10 +25,8 @@ class FileModifiedHandler(FileSystemEventHandler):
 class DirModifiedHandler(FileSystemEventHandler):
     """
     Reacts to modifications of .py files,
-    creation or moving into <dir_path>(and it's children) of .py files and directories.
-    __pycache__ is ignored.
     """
-    def __init__(self, dir_path: Union[str, Path], callback: action):
+    def __init__(self, callback: action, dir_path: Union[str, Path]):
         self.dir_path = str(dir_path)
         self.callback = callback
         super().__init__()
@@ -36,6 +34,18 @@ class DirModifiedHandler(FileSystemEventHandler):
     def on_modified(self, event: FileSystemEvent):
         path: str = event.src_path
         if not event.is_directory and path.endswith('.py') and '__pycache__' not in path:
+            self.callback()
+
+
+class NewModuleAwareDirHandler(DirModifiedHandler):
+    """
+    Reacts to modifications of .py files,
+    creation or moving into <dir_path>(and it's children) of .py files and directories.
+    __pycache__ is ignored.
+    """
+    def _check_and_call(self, event: FileSystemEvent):
+        path: str = event.src_path
+        if (event.is_directory or path.endswith('.py')) and '__pycache__' not in path:
             self.callback()
 
     def on_created(self, event: FileSystemEvent):
@@ -47,8 +57,3 @@ class DirModifiedHandler(FileSystemEventHandler):
     def on_moved(self, event: FileSystemMovedEvent):
         if self.dir_path in event.dest_path:
             self._check_and_call(event)
-
-    def _check_and_call(self, event: FileSystemEvent):
-        path: str = event.src_path
-        if (event.is_directory or path.endswith('.py')) and '__pycache__' not in path:
-            self.callback()

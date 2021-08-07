@@ -7,7 +7,6 @@ from typing import Dict, Set, Union
 
 from .utils import recursive_module_iterator
 
-
 T_mt_l = Dict[ModuleType, Lock]
 T_mt_t_mwb = Dict[ModuleType, Dict[type, 'ModuleWrapperBase']]
 T_mt_mwb = Union[ModuleType, 'ModuleWrapperBase']
@@ -41,13 +40,18 @@ class ModuleWrapperMeta(type):
 class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
     def __init__(self, module: ModuleType):
         self.module = module
+        self.lock = ModuleWrapperMeta.get_lock(module)
         self.path = Path(module.__file__)
         self.is_dir = self.path.name == '__init__.py'
         self.is_file = not self.is_dir
-        self.file_paths = self.get_file_paths()
-        self.lock = ModuleWrapperMeta.get_lock(module)
+        self._file_paths = self.get_file_paths()
+        
+    @property
+    def file_paths(self):
+        return self._file_paths
 
     def get_file_paths(self) -> Set[Path]:
+        print('get_file_paths')
         if self.is_dir:
             file_paths = set(map(
                 lambda m: Path(m.__file__),
@@ -63,8 +67,9 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
             return getattr(self.module, attribute_name)
 
     def reload(self):
-        self.do_reload()
-        ModuleWrapperMeta.reloaded(self.module)
+        with self.lock:
+            self.do_reload()
+            ModuleWrapperMeta.reloaded(self.module)
 
     def do_reload(self):
         raise NotImplementedError('This is a base class. Override this method')
@@ -77,16 +82,43 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
 
 
 class StandardModuleWrapper(ModuleWrapperBase):
+    def __init__(self, module: ModuleType):
+        super().__init__(module)
+        if self.is_file:
+            self.modules_to_reload = list((self.module,))
+        if self.is_dir:
+            self.modules_to_reload = list(recursive_module_iterator(self.module))
+
     def do_reload(self):
-        with self.lock:
-            try:
-                if self.is_file:
-                    importlib.reload(self.module)
-                if self.is_dir:
-                    for m in recursive_module_iterator(self.module):
-                        importlib.reload(m)
-            except Exception:
-                pass
+        try:
+            for m in self.modules_to_reload:
+                importlib.reload(m)
+        except Exception:
+            pass
+
+
+class NewModuleAwareStandardModuleWrapper(ModuleWrapperBase):
+    def __init__(self, module: ModuleType):
+        super().__init__(module)
+        self.file_paths_obsolete = False
+
+    def do_reload(self):
+        try:
+            if self.is_file:
+                importlib.reload(self.module)
+            if self.is_dir:
+                for m in recursive_module_iterator(self.module):
+                    importlib.reload(m)
+        except Exception:
+            pass
 
     def after_reload(self):
-        self.file_paths = self.get_file_paths()
+        self.file_paths_obsolete = True
+
+    @property
+    def file_paths(self):
+        with self.lock:
+            if self.file_paths_obsolete:    
+                self._file_paths = self.get_file_paths()
+                self.file_paths_obsolete = False
+        return super().file_paths

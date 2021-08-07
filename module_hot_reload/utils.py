@@ -1,13 +1,8 @@
-import inspect
 from pathlib import Path
 from types import ModuleType
-from typing import Union
 
 
-def get_caller_path(items_up_stack: int = 1):
-    return Path(inspect.stack()[items_up_stack + 1].filename)
-
-def path_full_include(path_1: Path, path_2: Path):
+def path_full_include(path_1: Path, path_2: Path) -> bool:
     path_1 = str(path_1.resolve())
     path_2 = str(path_2.resolve())
     return path_1 in path_2 or path_2 in path_1
