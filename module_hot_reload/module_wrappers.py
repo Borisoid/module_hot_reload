@@ -39,34 +39,36 @@ class ModuleWrapperMeta(type):
         return cls._module_lock_mapping[module]
 
     @classmethod
-    def reloaded(cls, module: ModuleType):
-        for instance in cls._modules_classes_instances[module].values():
-            instance.after_reload()
+    def before_reload_module(cls, module: 'ModuleWrapperBase'):
+        for instance in cls._modules_classes_instances[module.module].values():
+            instance.before_reload_module(module)
+
+    @classmethod
+    def after_reload_module(cls, module: 'ModuleWrapperBase'):
+        for instance in cls._modules_classes_instances[module.module].values():
+            instance.after_reload_module(module)
 
 
 class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
     def __init__(self, module: ModuleType):
-        self.module = module
         self.lock = ModuleWrapperMeta.get_lock(module)
-        self.path = Path(module.__file__)
+        self.module = module
+        self.path = Path(module.__file__).resolve()
         self.is_dir = self.path.name == '__init__.py'
         self.is_file = not self.is_dir
-        self._file_paths = self.get_file_paths()
-        
-    @property
-    def file_paths(self):
-        return self._file_paths
+        self.update_included_modules()
 
-    def get_file_paths(self) -> Set[Path]:
+    def get_included_modules(self, locked: bool = True) -> Set[ModuleType]:
+        return self._included_modules
+
+    def set_included_modules(self, value: Set[ModuleType]) -> None:
+        self._included_modules = value
+
+    def update_included_modules(self):
         if self.is_dir:
-            file_paths = set(map(
-                lambda m: Path(m.__file__),
-                recursive_module_iterator(self.module)
-            ))
+            self.set_included_modules(set(recursive_module_iterator(self.module)))
         else:  # if self.is_file:
-            file_paths = set((self.path,))
-
-        return file_paths
+            self.set_included_modules(set((self.module,)))
 
     def locked_get(self, attribute_name: str):
         with self.lock:
@@ -74,13 +76,25 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
 
     def reload(self):
         with self.lock:
+            self.before_reload_instance()
+            ModuleWrapperMeta.before_reload_module(self)
             self.do_reload()
-            ModuleWrapperMeta.reloaded(self.module)
+            self.after_reload_instance()
+            ModuleWrapperMeta.after_reload_module(self)
+
+    def before_reload_instance(self):
+        """Is called before do_reload() of this class"""
+
+    def before_reload_module(self, initiator: 'ModuleWrapperBase'):
+        """Is called before do_reload() of any ModuleWrapperBase instance that wraps the same module"""
 
     def do_reload(self):
         raise NotImplementedError('This is a base class. Override this method')
 
-    def after_reload(self):
+    def after_reload_instance(self):
+        """Is called after do_reload() of this class"""
+
+    def after_reload_module(self, initiator: 'ModuleWrapperBase'):
         """Is called after do_reload() of any ModuleWrapperBase instance that wraps the same module"""
 
     def retrieved(self):
@@ -88,49 +102,30 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
 
 
 class StandardModuleWrapper(ModuleWrapperBase):
-    """
-    Wraps a module. Does not keep track modules added after this class' instantiation
-    """
-    def __init__(self, module: ModuleType):
-        super().__init__(module)
-        if self.is_file:
-            self.modules_to_reload = list((self.module,))
-        if self.is_dir:
-            self.modules_to_reload = list(recursive_module_iterator(self.module))
-
+    """Wraps a module. Does not keep track of modules added after this class' instantiation"""
     def do_reload(self):
         try:
-            for m in self.modules_to_reload:
+            for m in self.get_included_modules(locked=False):
                 importlib.reload(m)
         except Exception:
             pass
 
 
-class NewModuleAwareStandardModuleWrapper(ModuleWrapperBase):
-    """
-    Wraps a module. Keeps track modules added after this class' instantiation
-    """
+class NewModuleAwareStandardModuleWrapper(StandardModuleWrapper):
+    """Wraps a module. Keeps track of modules added after this class' instantiation"""
     def __init__(self, module: ModuleType):
         super().__init__(module)
-        self.file_paths_obsolete = False
+        self._included_modules_obsolete = False
 
-    def do_reload(self):
-        try:
-            if self.is_file:
-                importlib.reload(self.module)
-            if self.is_dir:
-                for m in recursive_module_iterator(self.module):
-                    importlib.reload(m)
-        except Exception:
-            pass
+    def after_reload_module(self, initiator: ModuleWrapperBase):
+        self._included_modules_obsolete = True
 
-    def after_reload(self):
-        self.file_paths_obsolete = True
-
-    @property
-    def file_paths(self):
-        with self.lock:
-            if self.file_paths_obsolete:    
-                self._file_paths = self.get_file_paths()
-                self.file_paths_obsolete = False
-        return super().file_paths
+    def get_included_modules(self, locked: bool = True):
+        if self._included_modules_obsolete:
+            if locked:
+                self.lock.acquire()
+            self.update_included_modules()
+            if locked:
+                self.lock.release()
+            self._included_modules_obsolete = False
+        return super().get_included_modules()

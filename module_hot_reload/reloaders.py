@@ -37,13 +37,17 @@ class ReloaderBase:
                 'Cannot register module that contains reloader instance'
             )
             assert module.module not in self.registered_modules, (
-                f'Module {module.module!s} is already registered'
+                f'{module.module!s} is already registered'
             )
 
             for m in self.registered_modules:
-                duplicates = self.module_wrapper_class(m).file_paths.intersection(module.file_paths)
+                duplicates: Set[ModuleType] = (
+                    self.module_wrapper_class(m)
+                    .get_included_modules()
+                    .intersection(module.get_included_modules())
+                )
                 assert not duplicates, (
-                    f'These files are already registered: '
+                    f'These modules are already registered: '
                     f'{list(map(str, duplicates))}'
                 )
 
@@ -79,12 +83,10 @@ class OnModifiedReloader(ReloaderBase):
         self.watches: Dict[ModuleType, ObservedWatch] = {}
 
     def register(self, module: T_mt_mwb):
+        module = self.module_wrapper_class(module)
         self.can_register(module, raise_exception=True)
 
-        module = self.module_wrapper_class(module)
-
         if module.is_file:
-
             watch = self.observer.schedule(
                 self.file_handler(module.reload, str(module.path)),
                 str(module.path.parent),
@@ -92,7 +94,6 @@ class OnModifiedReloader(ReloaderBase):
 
         if module.is_dir:
             path = module.path.parent  # module.path -- whatever/__init__.py
-
             watch = self.observer.schedule(
                 self.dir_handler(module.reload, str(path)),
                 str(path),
@@ -134,9 +135,8 @@ class ManualReloader(ReloaderBase):
         https://docs.python.org/3/library/importlib.html#importlib.reload
     """
     def register(self, module: T_mt_mwb):
-        self.can_register(module, raise_exception=True)
-
         module = self.module_wrapper_class(module)
+        self.can_register(module, raise_exception=True)
         self.registered_modules.add(module.module)
 
     def unregister(self, module: T_mt_mwb):
