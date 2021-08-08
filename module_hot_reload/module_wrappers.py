@@ -5,7 +5,7 @@ from threading import Lock
 from types import ModuleType
 from typing import Dict, Set, Union
 
-from .utils import recursive_module_iterator
+from .utils import optionally_locked_method, recursive_module_iterator
 
 
 T_mt_l = Dict[ModuleType, Lock]
@@ -56,19 +56,19 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
         self.path = Path(module.__file__).resolve()
         self.is_dir = self.path.name == '__init__.py'
         self.is_file = not self.is_dir
+        self.included_modules: Set[ModuleType] = None
         self.update_included_modules()
 
-    def get_included_modules(self, locked: bool = True) -> Set[ModuleType]:
-        return self._included_modules
+    @optionally_locked_method()
+    def get_included_modules(self) -> Set[ModuleType]:
+        return self.included_modules
 
-    def set_included_modules(self, value: Set[ModuleType]) -> None:
-        self._included_modules = value
-
-    def update_included_modules(self):
+    @optionally_locked_method()
+    def update_included_modules(self) -> None:
         if self.is_dir:
-            self.set_included_modules(set(recursive_module_iterator(self.module)))
+            self.included_modules = set(recursive_module_iterator(self.module))
         else:  # if self.is_file:
-            self.set_included_modules(set((self.module,)))
+            self.included_modules = set((self.module,))
 
     def locked_get(self, attribute_name: str):
         with self.lock:
@@ -120,12 +120,9 @@ class NewModuleAwareStandardModuleWrapper(StandardModuleWrapper):
     def after_reload_module(self, initiator: ModuleWrapperBase):
         self._included_modules_obsolete = True
 
-    def get_included_modules(self, locked: bool = True):
+    @optionally_locked_method()
+    def get_included_modules(self):
         if self._included_modules_obsolete:
-            if locked:
-                self.lock.acquire()
-            self.update_included_modules()
-            if locked:
-                self.lock.release()
+            self.update_included_modules(locked=False)
             self._included_modules_obsolete = False
-        return super().get_included_modules()
+        return self.included_modules

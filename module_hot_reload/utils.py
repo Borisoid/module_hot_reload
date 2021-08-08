@@ -35,3 +35,15 @@ def has_instances_of_class(module: ModuleType, cls: type):
         if isinstance(attribute, cls):
             return True
     return False
+
+def optionally_locked_method(locked_default: bool = True):
+    def decorator(func):
+        def decorated(self, *args, locked: bool = locked_default, **kwargs):
+            if locked:
+                self.lock.acquire()
+            res = func(self, *args, **kwargs)
+            if locked:
+                self.lock.release()
+            return res
+        return decorated
+    return decorator
