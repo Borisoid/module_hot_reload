@@ -56,7 +56,7 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
         self.path = Path(module.__file__).resolve()
         self.is_dir = self.path.name == '__init__.py'
         self.is_file = not self.is_dir
-        self.included_modules: Set[ModuleType] = None
+        self.included_modules: Set[ModuleType] = set()
         self.update_included_modules()
 
     @optionally_locked_method()

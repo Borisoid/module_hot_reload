@@ -9,7 +9,7 @@ from .module_wrappers import (
     NewModuleAwareStandardModuleWrapper,
     StandardModuleWrapper,
 )
-from .utils import has_instances_of_class
+from .utils import has_instance_of_class
 from .watchdog_handlers import (
     DirModifiedHandler,
     FileModifiedHandler,
@@ -33,7 +33,7 @@ class ReloaderBase:
         """
         module = self.module_wrapper_class(module)
         try:
-            assert not has_instances_of_class(module.module, ReloaderBase), (
+            assert not has_instance_of_class(module.module, ReloaderBase), (
                 'Cannot register module that contains reloader instance'
             )
             assert module.module not in self.registered_modules, (
