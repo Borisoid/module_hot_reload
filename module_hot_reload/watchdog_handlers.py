@@ -38,7 +38,7 @@ class DirModifiedHandler(FileSystemEventHandler):
             self.callback()
 
 
-class NewModuleAwareDirHandler(DirModifiedHandler):
+class NewModuleAwareDirModifiedHandler(DirModifiedHandler):
     """
     Reacts to modifications of .py files,
     creation or moving into <dir_path>(and it's children) of .py files and directories.

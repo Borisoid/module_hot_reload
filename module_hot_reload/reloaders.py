@@ -5,19 +5,22 @@ from watchdog.observers import Observer
 from watchdog.observers.api import ObservedWatch
 
 from .module_wrappers import (
+    ModuleAttributeAccessor,
     ModuleWrapperBase,
-    NewModuleAwareStandardModuleWrapper,
-    StandardModuleWrapper,
+    NewModuleAwareAllModulesRecursiveStandardModuleWrapper,
+    NewModuleAwareDirModulesRecursiveStandardModuleWrapper,
+    NewModuleUnawareAllModulesRecursiveStandardModuleWrapper,
+    NewModuleUnawareDirModulesRecursiveStandardModuleWrapper,
 )
 from .utils import has_instance_of_class
 from .watchdog_handlers import (
     DirModifiedHandler,
     FileModifiedHandler,
-    NewModuleAwareDirHandler,
+    NewModuleAwareDirModifiedHandler,
 )
 
 
-T_mt_mwb = Union[ModuleType, ModuleWrapperBase]
+T_mt_mwb_maa = Union[ModuleType, ModuleWrapperBase, ModuleAttributeAccessor]
 
 
 class ReloaderBase:
@@ -26,7 +29,7 @@ class ReloaderBase:
     def __init__(self):
         self.registered_modules: Set[ModuleType] = set()
 
-    def can_register(self, module: T_mt_mwb, raise_exception=False):
+    def can_register(self, module: T_mt_mwb_maa, raise_exception: bool = False) -> bool:
         """
         The result depends on current reloader state, module this method
         is called in, attributes of <module> argument
@@ -59,30 +62,22 @@ class ReloaderBase:
             else:
                 return False
 
-    def register(self, module: T_mt_mwb):
+    def register(self, module: T_mt_mwb_maa) -> ModuleAttributeAccessor:
         raise NotImplementedError('This is a base class. Override this method')
 
-    def unregister(self, module: T_mt_mwb):
+    def unregister(self, module: T_mt_mwb_maa) -> None:
         raise NotImplementedError('This is a base class. Override this method')
 
 
-class OnModifiedReloader(ReloaderBase):
-    """
-    Watches registered modules and reloads them on change.
-    Does not keep track of modules added during it's work.
-    Reload is done via importlib.reload(), read about reloaded modules' behaveour in the docs.
-        https://docs.python.org/3/library/importlib.html#importlib.reload
-    """
-    module_wrapper_class: ModuleWrapperBase = StandardModuleWrapper
-    file_handler = FileModifiedHandler
-    dir_handler = DirModifiedHandler
+# Automatic Reloaders #########################################################
 
+class AutomaticReloaderMixin(ReloaderBase):
     def __init__(self):
         super().__init__()
         self.observer = Observer()
         self.watches: Dict[ModuleType, ObservedWatch] = {}
 
-    def register(self, module: T_mt_mwb):
+    def register(self, module: T_mt_mwb_maa) -> ModuleAttributeAccessor:
         module = self.module_wrapper_class(module)
         self.can_register(module, raise_exception=True)
 
@@ -102,49 +97,102 @@ class OnModifiedReloader(ReloaderBase):
 
         self.watches[module.module] = watch
         self.registered_modules.add(module.module)
+        return ModuleAttributeAccessor(module)
 
-    def unregister(self, module: T_mt_mwb):
+    def unregister(self, module: T_mt_mwb_maa) -> None:
         module = self.module_wrapper_class(module)
         self.registered_modules.pop(module.module)
         watch = self.watches.pop(module.module)
         self.observer.unschedule(watch)
 
-    def start(self):
+    def set_daemon(self, daemonic: bool) -> None:
+        self.observer.setDaemon(daemonic)
+
+    def start(self) -> None:
         self.observer.start()
 
-    def stop(self):
+    def stop(self) -> None:
         self.observer.stop()
 
+    def join(self, *args, **kwargs) -> None:
+        self.observer.join(*args, **kwargs)
 
-class NewModuleAwareOnModifiedReloader(OnModifiedReloader):
+
+class NewModuleUnawareAllModulesRecursiveAutomaticReloader(AutomaticReloaderMixin):
+    """
+    Watches registered modules and reloads them on change.
+    Does not keep track of modules added during it's work.
+    Reload is done via importlib.reload(), read about reloaded modules' behaveour in the docs.
+        https://docs.python.org/3/library/importlib.html#importlib.reload
+    """
+    module_wrapper_class: ModuleWrapperBase = \
+        NewModuleUnawareAllModulesRecursiveStandardModuleWrapper
+    file_handler = FileModifiedHandler
+    dir_handler = DirModifiedHandler
+
+    
+class NewModuleAwareAllModulesRecursiveAutomaticReloader(
+    NewModuleUnawareAllModulesRecursiveAutomaticReloader,
+):
     """
     Watches registered modules and reloads them on change.
     Keeps track of modules added during it's work.
     Reload is done via importlib.reload(), read about reloaded modules' behaveour in the docs.
         https://docs.python.org/3/library/importlib.html#importlib.reload
     """
-    module_wrapper_class = NewModuleAwareStandardModuleWrapper
-    dir_handler = NewModuleAwareDirHandler
+    module_wrapper_class: ModuleWrapperBase = \
+        NewModuleAwareAllModulesRecursiveStandardModuleWrapper
+    dir_handler = NewModuleAwareDirModifiedHandler
 
 
-class ManualReloader(ReloaderBase):
-    """
-    Basically a container for reloadable module wrappers that allows to reload
-    them all at once.
-    Reload is done via importlib.reload(), read about reloaded modules' behaveour in the docs.
-        https://docs.python.org/3/library/importlib.html#importlib.reload
-    """
-    module_wrapper_class: ModuleWrapperBase = StandardModuleWrapper
+class NewModuleUnawareDirModulesRecursiveAutomaticReloader(AutomaticReloaderMixin):
+    module_wrapper_class: ModuleWrapperBase = \
+        NewModuleUnawareDirModulesRecursiveStandardModuleWrapper
+    file_handler = FileModifiedHandler
+    dir_handler = DirModifiedHandler
 
-    def register(self, module: T_mt_mwb):
+
+class NewModuleAwareDirModulesRecursiveAutomaticReloader(
+    NewModuleUnawareDirModulesRecursiveAutomaticReloader,
+):
+    module_wrapper_class: ModuleWrapperBase = \
+        NewModuleAwareDirModulesRecursiveStandardModuleWrapper
+    dir_handler = NewModuleAwareDirModifiedHandler
+
+
+# Manual Reloaders ############################################################
+
+class ManualReloaderMixin(ReloaderBase):
+    def register(self, module: T_mt_mwb_maa) -> ModuleAttributeAccessor:
         module = self.module_wrapper_class(module)
         self.can_register(module, raise_exception=True)
         self.registered_modules.add(module.module)
+        return ModuleAttributeAccessor(module)
 
-    def unregister(self, module: T_mt_mwb):
+    def unregister(self, module: T_mt_mwb_maa) -> None:
         module = self.module_wrapper_class(module)
         self.registered_modules.pop(module.module)
 
-    def reload(self):
+    def reload(self) -> None:
         for m in self.registered_modules:
             self.module_wrapper_class(m).reload()
+
+
+class NewModuleUnawareAllModulesRecursiveManualReloader(ManualReloaderMixin):
+    module_wrapper_class: ModuleWrapperBase = \
+        NewModuleUnawareAllModulesRecursiveStandardModuleWrapper
+
+
+class NewModuleAwareAllModulesRecursiveManualReloader(ManualReloaderMixin):
+    module_wrapper_class: ModuleWrapperBase = \
+        NewModuleAwareAllModulesRecursiveStandardModuleWrapper
+
+    
+class NewModuleUnawareDirModulesRecursiveManualReloader(ManualReloaderMixin):
+    module_wrapper_class: ModuleWrapperBase = \
+        NewModuleUnawareDirModulesRecursiveStandardModuleWrapper
+
+
+class NewModuleAwareDirModulesRecursiveManualReloader(ManualReloaderMixin):
+    module_wrapper_class: ModuleWrapperBase = \
+        NewModuleAwareDirModulesRecursiveStandardModuleWrapper

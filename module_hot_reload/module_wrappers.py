@@ -3,14 +3,31 @@ from collections import defaultdict
 from pathlib import Path
 from threading import Lock
 from types import ModuleType
-from typing import Dict, Set, Union
+from typing import Any, Dict, Set, Union
 
 from .utils import optionally_locked_method, recursive_module_iterator
 
 
 T_mt_l = Dict[ModuleType, Lock]
 T_mt_t_mwb = Dict[ModuleType, Dict[type, 'ModuleWrapperBase']]
-T_mt_mwb = Union[ModuleType, 'ModuleWrapperBase']
+T_mt_aa = Dict[ModuleType, 'ModuleAttributeAccessor']
+T_mt_mwb_maa = Union[ModuleType, 'ModuleWrapperBase', 'ModuleAttributeAccessor']
+
+
+def extract_module(module: T_mt_mwb_maa) -> ModuleType:
+    if isinstance(module, ModuleType):
+        return module
+    else:
+        # so it works with ModuleAttributeAccessor
+        return object.__getattribute__(module, 'module')  
+
+
+class Storage:
+    _module_lock_mapping: T_mt_l = defaultdict(Lock)
+
+    @classmethod
+    def get_lock(cls, module: ModuleType) -> Lock:
+        return cls._module_lock_mapping[module]
 
 
 class ModuleWrapperMeta(type):
@@ -18,14 +35,11 @@ class ModuleWrapperMeta(type):
     For each wrapped module keeps a single instance of each class
     the module has been wrapped with.
     Basically singleton but there is an instance per wrapped module.
-    Also contains one lock per wrapped module.
     """
-    _module_lock_mapping: T_mt_l = defaultdict(Lock)
     _modules_classes_instances: T_mt_t_mwb = defaultdict(dict)
 
-    def __call__(cls, module: T_mt_mwb, *args, **kwargs):
-        if not isinstance(module, ModuleType):
-            module = module.module
+    def __call__(cls, module: T_mt_mwb_maa, *args, **kwargs) -> 'ModuleWrapperBase':
+        module = extract_module(module)
 
         classes = cls._modules_classes_instances[module]
         if cls not in classes:
@@ -35,23 +49,19 @@ class ModuleWrapperMeta(type):
         return instance
 
     @classmethod
-    def get_lock(cls, module: ModuleType):
-        return cls._module_lock_mapping[module]
-
-    @classmethod
-    def before_reload_module(cls, module: 'ModuleWrapperBase'):
+    def before_reload_module(cls, module: 'ModuleWrapperBase') -> None:
         for instance in cls._modules_classes_instances[module.module].values():
             instance.before_reload_module(module)
 
     @classmethod
-    def after_reload_module(cls, module: 'ModuleWrapperBase'):
+    def after_reload_module(cls, module: 'ModuleWrapperBase') -> None:
         for instance in cls._modules_classes_instances[module.module].values():
             instance.after_reload_module(module)
 
 
 class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
     def __init__(self, module: ModuleType):
-        self.lock = ModuleWrapperMeta.get_lock(module)
+        self.lock = Storage.get_lock(module)
         self.module = module
         self.path = Path(module.__file__).resolve()
         self.is_dir = self.path.name == '__init__.py'
@@ -65,16 +75,25 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
 
     @optionally_locked_method()
     def update_included_modules(self) -> None:
-        if self.is_dir:
-            self.included_modules = set(recursive_module_iterator(self.module))
-        else:  # if self.is_file:
-            self.included_modules = set((self.module,))
+        raise NotImplementedError('This is a base class. Override this method')
 
-    def locked_get(self, attribute_name: str):
+    def locked_set(self, name: str, value: Any) -> None:
         with self.lock:
-            return getattr(self.module, attribute_name)
+            setattr(self.module, name, value)
 
-    def reload(self):
+    def locked_get(self, name: str) -> Any:
+        with self.lock:
+            return getattr(self.module, name)
+
+    def __getattr__(self, name: str) -> Any:
+        """
+        Searches <name> in `self.module` if it's not found in `self`.
+        If <name> is wrapper's attribute and you're trying to get module's attribute -
+        use `locked_get()` or `AttributeAccessor`
+        """
+        return self.locked_get(name)
+
+    def reload(self) -> None:
         with self.lock:
             self.before_reload_instance()
             ModuleWrapperMeta.before_reload_module(self)
@@ -82,47 +101,146 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
             self.after_reload_instance()
             ModuleWrapperMeta.after_reload_module(self)
 
-    def before_reload_instance(self):
-        """Is called before do_reload() of this class"""
+    def before_reload_instance(self) -> None:
+        """Called before do_reload() of this instance"""
 
-    def before_reload_module(self, initiator: 'ModuleWrapperBase'):
-        """Is called before do_reload() of any ModuleWrapperBase instance that wraps the same module"""
+    def before_reload_module(self, initiator: 'ModuleWrapperBase') -> None:
+        """Called before do_reload() of any ModuleWrapperBase instance that wraps the same module"""
 
-    def do_reload(self):
+    def do_reload(self) -> None:
         raise NotImplementedError('This is a base class. Override this method')
 
-    def after_reload_instance(self):
-        """Is called after do_reload() of this class"""
+    def after_reload_instance(self) -> None:
+        """Called after do_reload() of this instance"""
 
-    def after_reload_module(self, initiator: 'ModuleWrapperBase'):
-        """Is called after do_reload() of any ModuleWrapperBase instance that wraps the same module"""
+    def after_reload_module(self, initiator: 'ModuleWrapperBase') -> None:
+        """Called after do_reload() of any ModuleWrapperBase instance that wraps the same module"""
 
-    def retrieved(self):
+    def retrieved(self) -> None:
         pass
 
 
-class StandardModuleWrapper(ModuleWrapperBase):
-    """Wraps a module. Does not keep track of modules added after this class' instantiation"""
-    def do_reload(self):
-        try:
-            for m in self.get_included_modules(locked=False):
+class AllModulesRecursiveUpdateMixin:
+    @optionally_locked_method()
+    def update_included_modules(self) -> None:
+        self.included_modules = set(recursive_module_iterator(self.module))
+
+
+class DirModulesRecursiveUpdateMixin:
+    @optionally_locked_method()
+    def update_included_modules(self) -> None:
+        if self.is_dir:
+            self.included_modules = set(recursive_module_iterator(self.module))
+        else:  # if self.is_file
+            self.included_modules = set(tuple(self.module))
+
+
+class StandardDoReloadMixin:
+    def do_reload(self) -> None:
+        included_modules = self.get_included_modules(locked=False)
+        included_locks = set(Storage.get_lock(m) for m in included_modules)
+        included_locks.remove(self.lock)
+        for l in included_locks:
+            l.acquire()
+        for m in included_modules:
+            try:
                 importlib.reload(m)
-        except Exception:
-            pass
+            except Exception:
+                pass
+        for l in included_locks:
+            l.release()
 
 
-class NewModuleAwareStandardModuleWrapper(StandardModuleWrapper):
-    """Wraps a module. Keeps track of modules added after this class' instantiation"""
+class NewModuleAwarenessMixin:
     def __init__(self, module: ModuleType):
         super().__init__(module)
         self._included_modules_obsolete = False
 
-    def after_reload_module(self, initiator: ModuleWrapperBase):
+    def before_reload_module(self, initiator: ModuleWrapperBase) -> None:
         self._included_modules_obsolete = True
 
     @optionally_locked_method()
-    def get_included_modules(self):
+    def get_included_modules(self) -> Set[ModuleType]:
         if self._included_modules_obsolete:
             self.update_included_modules(locked=False)
             self._included_modules_obsolete = False
         return self.included_modules
+
+
+class NewModuleUnawareAllModulesRecursiveStandardModuleWrapper(
+    AllModulesRecursiveUpdateMixin,
+    StandardDoReloadMixin,
+    ModuleWrapperBase,
+):
+    """Does not keep track of modules added after this class' instantiation.
+    Recursively reloads all modules not higher in the file system than wrapped one.
+    """
+
+
+class NewModuleAwareAllModulesRecursiveStandardModuleWrapper(
+    NewModuleAwarenessMixin,
+    NewModuleUnawareAllModulesRecursiveStandardModuleWrapper,
+):
+    """Keeps track of modules added after this class' instantiation.
+    Recursively reloads all modules not higher in the file system than wrapped one.
+    """
+
+
+class NewModuleUnawareDirModulesRecursiveStandardModuleWrapper(
+    DirModulesRecursiveUpdateMixin,
+    StandardDoReloadMixin,
+    ModuleWrapperBase,
+):
+    """Does not keep track of modules added after this class' instantiation.
+    Recursively reloads dir modules not higher in the file system than wrapped one.
+    Single file modules are reloaded with no recurson.
+    """
+
+
+class NewModuleAwareDirModulesRecursiveStandardModuleWrapper(
+    NewModuleAwarenessMixin,
+    NewModuleUnawareDirModulesRecursiveStandardModuleWrapper,
+):
+    """Keeps track of modules added after this class' instantiation.
+    Recursively reloads dir modules not higher in the file system than wrapped one.
+    Single file modules are reloaded with no recurson.
+    """
+
+
+# Accessors ###################################################################
+
+class ModuleAttributeAccessorMeta(type):
+    _instances: T_mt_aa = dict()
+
+    def __call__(cls, module: T_mt_mwb_maa) -> 'ModuleAttributeAccessor':
+        module = extract_module(module)
+        instance = cls._instances.get(module)
+        if not instance:
+            instance = super().__call__(module)
+            cls._instances[module] = instance
+        return instance
+
+
+class ModuleAttributeAccessor(metaclass=ModuleAttributeAccessorMeta):
+    """
+    Special wrapper used in cases when module's and wrapper's attribute names intersect.
+    Allows to get as well as set module's attributes using respective lock with normal syntax:
+
+    `module = AttributeAccessor(module)`
+
+    `a = module.attribute`
+
+    `module.attribute = 42`
+    """
+
+    def __init__(self, module: T_mt_mwb_maa):
+        super().__setattr__('module', extract_module(module))
+        super().__setattr__('lock', Storage.get_lock(module))
+
+    def __getattribute__(self, name: str) -> Any:
+        with super().__getattribute__('lock'):
+            return getattr(super().__getattribute__('module'), name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        with super().__getattribute__('lock'):
+            setattr(super().__getattribute__('module'), name, value)

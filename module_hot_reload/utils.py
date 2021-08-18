@@ -7,11 +7,13 @@ def is_path_in_path(path_1: Path, path_2: Path) -> bool:
     path_2 = str(path_2.resolve())
     return path_1 in path_2
 
+
 def dirname(path: Path):
     if path.is_dir():
         return path
     if path.is_file():
         return path.parent
+
 
 def recursive_module_iterator(module: ModuleType):
     yield module
@@ -21,11 +23,12 @@ def recursive_module_iterator(module: ModuleType):
             type(attribute) is ModuleType and
             hasattr(attribute, '__file__') and
             is_path_in_path(
-                dirname(Path(module.__file__)),
-                dirname(Path(attribute.__file__))
+                dirname(Path(module.__file__).resolve()),
+                dirname(Path(attribute.__file__).resolve())
             )
         ):
             yield from recursive_module_iterator(attribute)
+
 
 def has_instance_of_class(module: ModuleType, cls: type):
     for attribute_name in dir(module):
@@ -34,14 +37,15 @@ def has_instance_of_class(module: ModuleType, cls: type):
             return True
     return False
 
-def optionally_locked_method(locked_default: bool = True):
+
+def optionally_locked_method(locked_default: bool = True, lock_attribute_name: str = 'lock'):
     def decorator(func):
         def decorated(self, *args, locked: bool = locked_default, **kwargs):
             if locked:
-                self.lock.acquire()
+                getattr(self, lock_attribute_name).acquire()
             res = func(self, *args, **kwargs)
             if locked:
-                self.lock.release()
+                getattr(self, lock_attribute_name).release()
             return res
         return decorated
     return decorator
