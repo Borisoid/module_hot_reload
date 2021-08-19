@@ -43,16 +43,16 @@ class ReloaderBase:
                 f'{module.module!s} is already registered'
             )
 
-            for m in self.registered_modules:
-                duplicates: Set[ModuleType] = (
-                    self.module_wrapper_class(m)
-                    .get_included_modules()
-                    .intersection(module.get_included_modules())
-                )
-                assert not duplicates, (
-                    f'These modules are already registered: '
-                    f'{list(map(str, duplicates))}'
-                )
+            # for m in self.registered_modules:
+            #     duplicates: Set[ModuleType] = (
+            #         self.module_wrapper_class(m)
+            #         .get_included_modules()
+            #         .intersection(module.get_included_modules())
+            #     )
+            #     assert not duplicates, (
+            #         f'These modules are already registered: '
+            #         f'{list(map(str, duplicates))}'
+            #     )
 
             return True
 

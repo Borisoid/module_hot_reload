@@ -3,15 +3,23 @@ from collections import defaultdict
 from pathlib import Path
 from threading import Lock
 from types import ModuleType
-from typing import Any, Dict, Set, Union
+from typing import Any, Dict, Sequence, Set, Union
 
-from .utils import optionally_locked_method, recursive_module_iterator
+from .utils import SmartLock, dirname, is_path_in_path, is_path_in_path, optionally_locked_method
 
 
 T_mt_l = Dict[ModuleType, Lock]
 T_mt_t_mwb = Dict[ModuleType, Dict[type, 'ModuleWrapperBase']]
 T_mt_aa = Dict[ModuleType, 'ModuleAttributeAccessor']
 T_mt_mwb_maa = Union[ModuleType, 'ModuleWrapperBase', 'ModuleAttributeAccessor']
+
+
+class Storage:
+    _module_lock_mapping: T_mt_l = defaultdict(Lock)
+
+    @classmethod
+    def get_lock(cls, module: ModuleType) -> Lock:
+        return cls._module_lock_mapping[module]
 
 
 def extract_module(module: T_mt_mwb_maa) -> ModuleType:
@@ -22,12 +30,20 @@ def extract_module(module: T_mt_mwb_maa) -> ModuleType:
         return object.__getattribute__(module, 'module')  
 
 
-class Storage:
-    _module_lock_mapping: T_mt_l = defaultdict(Lock)
-
-    @classmethod
-    def get_lock(cls, module: ModuleType) -> Lock:
-        return cls._module_lock_mapping[module]
+def recursive_locked_module_iterator(module: ModuleType):
+    with SmartLock(Storage.get_lock(module)):
+        yield module
+        for attribute_name in dir(module):
+            attribute = getattr(module, attribute_name)
+            if (
+                type(attribute) is ModuleType and
+                hasattr(attribute, '__file__') and
+                is_path_in_path(
+                    dirname(Path(module.__file__).resolve()),
+                    dirname(Path(attribute.__file__).resolve())
+                )
+            ):
+                yield from recursive_locked_module_iterator(attribute)
 
 
 class ModuleWrapperMeta(type):
@@ -63,12 +79,12 @@ class ModuleWrapperMeta(type):
 
 class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
     def __init__(self, module: ModuleType):
-        self.lock = Storage.get_lock(module)
+        self.lock = Lock()  # wrapper lock
         self.module = module
         self.path = Path(module.__file__).resolve()
         self.is_dir = self.path.name == '__init__.py'
         self.is_file = not self.is_dir
-        self.included_modules: Set[ModuleType] = set()
+        self.included_modules: Sequence[ModuleType] = ()
         self.update_included_modules()
 
     @optionally_locked_method()
@@ -76,7 +92,7 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
         raise NotImplementedError('This is a base class. Override this method')
 
     @optionally_locked_method()
-    def get_included_modules(self) -> Set[ModuleType]:
+    def get_included_modules(self) -> Sequence[ModuleType]:
         return self.included_modules
 
     @optionally_locked_method()
@@ -92,16 +108,16 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
             return getattr(self.module, name)
 
     def reload(self) -> None:
-        included_locks = self.get_included_locks()
+        locks = self.get_included_locks(locked=False)
 
-        for l in included_locks:
+        for l in locks:
             l.acquire()
         
         ModuleWrapperMeta.before_reload_module(self)
         self.do_reload()
         ModuleWrapperMeta.after_reload_module(self)
 
-        for l in included_locks:
+        for l in locks:
             l.release()
 
     def before_reload_module(self, initiator: 'ModuleWrapperBase') -> None:
@@ -129,21 +145,21 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
 class AllModulesRecursiveUpdateMixin:
     @optionally_locked_method()
     def update_included_modules(self) -> None:
-        self.included_modules = set(recursive_module_iterator(self.module))
+        self.included_modules = tuple(recursive_locked_module_iterator(self.module))
 
 
 class DirModulesRecursiveUpdateMixin:
     @optionally_locked_method()
     def update_included_modules(self) -> None:
         if self.is_dir:
-            self.included_modules = set(recursive_module_iterator(self.module))
+            self.included_modules = tuple(recursive_locked_module_iterator(self.module))
         else:  # if self.is_file
-            self.included_modules = {self.module}
+            self.included_modules = tuple((self.module,))
 
 
 class StandardDoReloadMixin:
     def do_reload(self) -> None:
-        for m in self.get_included_modules(locked=False):
+        for m in self.get_included_modules(locked=False)[::-1]:
             try:
                 importlib.reload(m)
             except Exception as e:
@@ -162,7 +178,7 @@ class NewModuleAwarenessMixin:
         self._included_modules_obsolete = True
 
     @optionally_locked_method()
-    def get_included_modules(self) -> Set[ModuleType]:
+    def get_included_modules(self) -> Sequence[ModuleType]:
         if self._included_modules_obsolete:
             self.update_included_modules(locked=False)
             self._included_modules_obsolete = False
@@ -236,7 +252,8 @@ class ModuleAttributeAccessor(metaclass=ModuleAttributeAccessorMeta):
     """
 
     def __init__(self, module: T_mt_mwb_maa):
-        super().__setattr__('module', extract_module(module))
+        module = extract_module(module)
+        super().__setattr__('module', module)
         super().__setattr__('lock', Storage.get_lock(module))
 
     def __getattribute__(self, name: str) -> Any:

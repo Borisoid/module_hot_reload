@@ -9,13 +9,19 @@ sys.path.insert(0, str(Path('../').resolve()))
 
 from module_hot_reload.reloaders import (
     NewModuleAwareAllModulesRecursiveAutomaticReloader,
+    NewModuleAwareDirModulesRecursiveAutomaticReloader,
+    NewModuleUnawareAllModulesRecursiveAutomaticReloader,
+    NewModuleUnawareDirModulesRecursiveAutomaticReloader,
 )
 
 import example_1
 import example_2
 
 
-r = NewModuleAwareAllModulesRecursiveAutomaticReloader()
+# r = NewModuleAwareAllModulesRecursiveAutomaticReloader()
+# r = NewModuleAwareDirModulesRecursiveAutomaticReloader()
+r = NewModuleUnawareAllModulesRecursiveAutomaticReloader()
+# r = NewModuleUnawareDirModulesRecursiveAutomaticReloader()
 # w = r.module_wrapper_class
 
 example_1 = r.register(example_1)

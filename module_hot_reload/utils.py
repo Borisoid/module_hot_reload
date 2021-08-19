@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Lock
 from types import ModuleType
 
 
@@ -13,21 +14,6 @@ def dirname(path: Path):
         return path
     if path.is_file():
         return path.parent
-
-
-def recursive_module_iterator(module: ModuleType):
-    yield module
-    for attribute_name in dir(module):
-        attribute = getattr(module, attribute_name)
-        if (
-            type(attribute) is ModuleType and
-            hasattr(attribute, '__file__') and
-            is_path_in_path(
-                dirname(Path(module.__file__).resolve()),
-                dirname(Path(attribute.__file__).resolve())
-            )
-        ):
-            yield from recursive_module_iterator(attribute)
 
 
 def has_instance_of_class(module: ModuleType, cls: type):
@@ -49,3 +35,20 @@ def optionally_locked_method(locked_default: bool = True, lock_attribute_name: s
             return res
         return decorated
     return decorator
+
+
+class SmartLock:
+    """
+    Acquires lock if it's not locked and releases if it wasn't locked initially
+    """
+
+    def __init__(self, lock: Lock):
+        self.lock = lock
+        self.unlock = False
+
+    def __enter__(self):
+        self.unlock = self.lock.acquire(blocking=False)
+
+    def __exit__(self, *args, **kwargs):
+        if self.unlock:
+            self.lock.release()
