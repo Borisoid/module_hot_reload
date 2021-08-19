@@ -37,13 +37,15 @@ class ModuleWrapperMeta(type):
     Basically singleton but there is an instance per wrapped module.
     """
     _modules_classes_instances: T_mt_t_mwb = defaultdict(dict)
+    _all_instances: Set['ModuleWrapperBase'] = set()
 
     def __call__(cls, module: T_mt_mwb_maa, *args, **kwargs) -> 'ModuleWrapperBase':
         module = extract_module(module)
 
         classes = cls._modules_classes_instances[module]
         if cls not in classes:
-            classes[cls] = super().__call__(module, *args, **kwargs)
+            classes[cls] = new_instance = super().__call__(module, *args, **kwargs)
+            cls._all_instances.add(new_instance)
         instance = cls._modules_classes_instances[module][cls]
         instance.retrieved()
         return instance
@@ -70,12 +72,16 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
         self.update_included_modules()
 
     @optionally_locked_method()
+    def update_included_modules(self) -> None:
+        raise NotImplementedError('This is a base class. Override this method')
+
+    @optionally_locked_method()
     def get_included_modules(self) -> Set[ModuleType]:
         return self.included_modules
 
     @optionally_locked_method()
-    def update_included_modules(self) -> None:
-        raise NotImplementedError('This is a base class. Override this method')
+    def get_included_locks(self):
+        return set(Storage.get_lock(m) for m in self.get_included_modules(locked=False))
 
     def locked_set(self, name: str, value: Any) -> None:
         with self.lock:
@@ -85,39 +91,36 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
         with self.lock:
             return getattr(self.module, name)
 
-    def __getattr__(self, name: str) -> Any:
-        """
-        Searches <name> in `self.module` if it's not found in `self`.
-        If <name> is wrapper's attribute and you're trying to get module's attribute -
-        use `locked_get()` or `AttributeAccessor`
-        """
-        return self.locked_get(name)
-
     def reload(self) -> None:
-        with self.lock:
-            self.before_reload_instance()
-            ModuleWrapperMeta.before_reload_module(self)
-            self.do_reload()
-            self.after_reload_instance()
-            ModuleWrapperMeta.after_reload_module(self)
+        included_locks = self.get_included_locks()
 
-    def before_reload_instance(self) -> None:
-        """Called before do_reload() of this instance"""
+        for l in included_locks:
+            l.acquire()
+        
+        ModuleWrapperMeta.before_reload_module(self)
+        self.do_reload()
+        ModuleWrapperMeta.after_reload_module(self)
+
+        for l in included_locks:
+            l.release()
 
     def before_reload_module(self, initiator: 'ModuleWrapperBase') -> None:
-        """Called before do_reload() of any ModuleWrapperBase instance that wraps the same module"""
+        """Called before do_reload() of this instance
+        for all ModuleWrapperBase instances whose included_modules intersect
+        with this instance's included_modules
+        """
 
     def do_reload(self) -> None:
         raise NotImplementedError('This is a base class. Override this method')
 
     def do_reload_except(self, e: BaseException) -> None:
-        pass
-
-    def after_reload_instance(self) -> None:
-        """Called after do_reload() of this instance"""
+        raise e
 
     def after_reload_module(self, initiator: 'ModuleWrapperBase') -> None:
-        """Called after do_reload() of any ModuleWrapperBase instance that wraps the same module"""
+        """Called after do_reload() of this instance
+        for all ModuleWrapperBase instances whose included_modules intersect
+        with this instance's included_modules
+        """
 
     def retrieved(self) -> None:
         pass
@@ -140,18 +143,14 @@ class DirModulesRecursiveUpdateMixin:
 
 class StandardDoReloadMixin:
     def do_reload(self) -> None:
-        included_modules = self.get_included_modules(locked=False) - {self.module}
-        included_locks = set(Storage.get_lock(m) for m in included_modules)
-
-        for l in included_locks:
-            l.acquire()
-        for m in included_modules:
+        for m in self.get_included_modules(locked=False):
             try:
                 importlib.reload(m)
             except Exception as e:
                 self.do_reload_except(e)
-        for l in included_locks:
-            l.release()
+        
+    def do_reload_except(self, e: BaseException) -> None:
+        pass
 
 
 class NewModuleAwarenessMixin:
