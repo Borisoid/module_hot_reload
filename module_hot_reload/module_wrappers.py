@@ -110,6 +110,9 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
     def do_reload(self) -> None:
         raise NotImplementedError('This is a base class. Override this method')
 
+    def do_reload_except(self, e: BaseException) -> None:
+        pass
+
     def after_reload_instance(self) -> None:
         """Called after do_reload() of this instance"""
 
@@ -132,21 +135,21 @@ class DirModulesRecursiveUpdateMixin:
         if self.is_dir:
             self.included_modules = set(recursive_module_iterator(self.module))
         else:  # if self.is_file
-            self.included_modules = set(tuple(self.module))
+            self.included_modules = {self.module}
 
 
 class StandardDoReloadMixin:
     def do_reload(self) -> None:
-        included_modules = self.get_included_modules(locked=False)
+        included_modules = self.get_included_modules(locked=False) - {self.module}
         included_locks = set(Storage.get_lock(m) for m in included_modules)
-        included_locks.remove(self.lock)
+
         for l in included_locks:
             l.acquire()
         for m in included_modules:
             try:
                 importlib.reload(m)
-            except Exception:
-                pass
+            except Exception as e:
+                self.do_reload_except(e)
         for l in included_locks:
             l.release()
 
