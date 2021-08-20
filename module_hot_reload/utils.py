@@ -24,6 +24,15 @@ def has_instance_of_class(module: ModuleType, cls: type):
     return False
 
 
+def locked_method(lock_attribute_name: str = 'lock'):
+    def decorator(func):
+        def decorated(self, *args, **kwargs):
+            with getattr(self, lock_attribute_name):
+                return func(self, *args, **kwargs)
+        return decorated
+    return decorator
+
+
 def optionally_locked_method(locked_default: bool = True, lock_attribute_name: str = 'lock'):
     def decorator(func):
         def decorated(self, *args, locked: bool = locked_default, **kwargs):
@@ -35,20 +44,3 @@ def optionally_locked_method(locked_default: bool = True, lock_attribute_name: s
             return res
         return decorated
     return decorator
-
-
-class SmartLock:
-    """
-    Acquires lock if it's not locked and releases if it wasn't locked initially
-    """
-
-    def __init__(self, lock: Lock):
-        self.lock = lock
-        self.unlock = False
-
-    def __enter__(self):
-        self.unlock = self.lock.acquire(blocking=False)
-
-    def __exit__(self, *args, **kwargs):
-        if self.unlock:
-            self.lock.release()

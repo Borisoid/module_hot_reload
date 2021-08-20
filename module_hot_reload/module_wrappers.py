@@ -1,25 +1,31 @@
 import importlib
 from collections import defaultdict
 from pathlib import Path
-from threading import Lock
+from threading import Lock, RLock
 from types import ModuleType
 from typing import Any, Dict, Sequence, Set, Union
 
-from .utils import SmartLock, dirname, is_path_in_path, is_path_in_path, optionally_locked_method
+from .utils import dirname, is_path_in_path, locked_method
 
 
-T_mt_l = Dict[ModuleType, Lock]
+T_a_l = Dict[Any, Lock]
+T_a_rl = Dict[Any, RLock]
 T_mt_t_mwb = Dict[ModuleType, Dict[type, 'ModuleWrapperBase']]
 T_mt_aa = Dict[ModuleType, 'ModuleAttributeAccessor']
 T_mt_mwb_maa = Union[ModuleType, 'ModuleWrapperBase', 'ModuleAttributeAccessor']
 
 
 class Storage:
-    _module_lock_mapping: T_mt_l = defaultdict(Lock)
+    _module_lock_mapping: T_a_l = defaultdict(Lock)
+    _module_rlock_mapping: T_a_rl = defaultdict(RLock)
 
     @classmethod
-    def get_lock(cls, module: ModuleType) -> Lock:
-        return cls._module_lock_mapping[module]
+    def get_lock(cls, obj: Any) -> Lock:
+        return cls._module_lock_mapping[obj]
+
+    @classmethod
+    def get_rlock(cls, obj: Any) -> RLock:
+        return cls._module_rlock_mapping[obj]
 
 
 def extract_module(module: T_mt_mwb_maa) -> ModuleType:
@@ -31,7 +37,7 @@ def extract_module(module: T_mt_mwb_maa) -> ModuleType:
 
 
 def recursive_locked_module_iterator(module: ModuleType):
-    with SmartLock(Storage.get_lock(module)):
+    with Storage.get_rlock(module):
         yield module
         for attribute_name in dir(module):
             attribute = getattr(module, attribute_name)
@@ -79,77 +85,90 @@ class ModuleWrapperMeta(type):
 
 class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
     def __init__(self, module: ModuleType):
-        self.lock = Lock()  # wrapper lock
+        self.lock = RLock()  # wrapper lock
+        self.module_lock = Storage.get_lock(module)
         self.module = module
         self.path = Path(module.__file__).resolve()
         self.is_dir = self.path.name == '__init__.py'
         self.is_file = not self.is_dir
-        self.included_modules: Sequence[ModuleType] = ()
+        self.included_modules: Sequence[ModuleType] = tuple()
         self.update_included_modules()
 
-    @optionally_locked_method()
+    @locked_method()
     def update_included_modules(self) -> None:
         raise NotImplementedError('This is a base class. Override this method')
 
-    @optionally_locked_method()
+    @locked_method()
     def get_included_modules(self) -> Sequence[ModuleType]:
         return self.included_modules
 
-    @optionally_locked_method()
+    @locked_method()
     def get_included_locks(self):
-        return set(Storage.get_lock(m) for m in self.get_included_modules(locked=False))
+        return set(Storage.get_lock(m) for m in self.get_included_modules())
 
+    @locked_method()
+    @locked_method('module_lock')
     def locked_set(self, name: str, value: Any) -> None:
-        with self.lock:
-            setattr(self.module, name, value)
+        setattr(self.module, name, value)
 
+    @locked_method()
+    @locked_method('module_lock')
     def locked_get(self, name: str) -> Any:
-        with self.lock:
-            return getattr(self.module, name)
+        return getattr(self.module, name)
 
+    @locked_method()
     def reload(self) -> None:
-        locks = self.get_included_locks(locked=False)
-
-        for l in locks:
-            l.acquire()
-        
         ModuleWrapperMeta.before_reload_module(self)
-        self.do_reload()
+
+        locks = self.get_included_locks()
+
+        try:
+            for l in locks:
+                l.acquire()
+
+            self.do_reload()
+
+        finally:
+            for l in locks:
+                l.release()
+
         ModuleWrapperMeta.after_reload_module(self)
 
-        for l in locks:
-            l.release()
-
+    @locked_method()
     def before_reload_module(self, initiator: 'ModuleWrapperBase') -> None:
         """Called before do_reload() of this instance
         for all ModuleWrapperBase instances whose included_modules intersect
         with this instance's included_modules
         """
 
+    @locked_method()
     def do_reload(self) -> None:
         raise NotImplementedError('This is a base class. Override this method')
 
+    @locked_method()
     def do_reload_except(self, e: BaseException) -> None:
         raise e
 
+    @locked_method()
     def after_reload_module(self, initiator: 'ModuleWrapperBase') -> None:
         """Called after do_reload() of this instance
         for all ModuleWrapperBase instances whose included_modules intersect
         with this instance's included_modules
         """
 
+    @locked_method()
     def retrieved(self) -> None:
         pass
 
 
 class AllModulesRecursiveUpdateMixin:
-    @optionally_locked_method()
+    @locked_method()
     def update_included_modules(self) -> None:
         self.included_modules = tuple(recursive_locked_module_iterator(self.module))
 
 
 class DirModulesRecursiveUpdateMixin:
-    @optionally_locked_method()
+    @locked_method()
     def update_included_modules(self) -> None:
         if self.is_dir:
             self.included_modules = tuple(recursive_locked_module_iterator(self.module))
@@ -158,13 +177,15 @@ class DirModulesRecursiveUpdateMixin:
 
 
 class StandardDoReloadMixin:
+    @locked_method()
     def do_reload(self) -> None:
-        for m in self.get_included_modules(locked=False)[::-1]:
+        for m in self.get_included_modules()[::-1]:
             try:
                 importlib.reload(m)
             except Exception as e:
                 self.do_reload_except(e)
         
+    @locked_method()
     def do_reload_except(self, e: BaseException) -> None:
         pass
 
@@ -174,13 +195,14 @@ class NewModuleAwarenessMixin:
         super().__init__(module)
         self._included_modules_obsolete = False
 
+    @locked_method()
     def before_reload_module(self, initiator: ModuleWrapperBase) -> None:
         self._included_modules_obsolete = True
 
-    @optionally_locked_method()
+    @locked_method()
     def get_included_modules(self) -> Sequence[ModuleType]:
         if self._included_modules_obsolete:
-            self.update_included_modules(locked=False)
+            self.update_included_modules()
             self._included_modules_obsolete = False
         return self.included_modules
 
