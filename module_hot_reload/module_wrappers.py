@@ -8,7 +8,6 @@ from typing import Any, Dict, Sequence, Set, Union
 from .utils import dirname, is_path_in_path, locked_method
 
 
-T_a_l = Dict[Any, Lock]
 T_a_rl = Dict[Any, RLock]
 T_mt_t_mwb = Dict[ModuleType, Dict[type, 'ModuleWrapperBase']]
 T_mt_aa = Dict[ModuleType, 'ModuleAttributeAccessor']
@@ -16,12 +15,7 @@ T_mt_mwb_maa = Union[ModuleType, 'ModuleWrapperBase', 'ModuleAttributeAccessor']
 
 
 class Storage:
-    _module_lock_mapping: T_a_l = defaultdict(Lock)
     _module_rlock_mapping: T_a_rl = defaultdict(RLock)
-
-    @classmethod
-    def get_lock(cls, obj: Any) -> Lock:
-        return cls._module_lock_mapping[obj]
 
     @classmethod
     def get_rlock(cls, obj: Any) -> RLock:
@@ -73,20 +67,25 @@ class ModuleWrapperMeta(type):
         return instance
 
     @classmethod
-    def before_reload_module(cls, module: 'ModuleWrapperBase') -> None:
-        for instance in cls._modules_classes_instances[module.module].values():
-            instance.before_reload_module(module)
+    def before_reload_included(cls, module: 'ModuleWrapperBase') -> None:
+        for instance in cls._all_instances:
+            if set(instance.get_included_modules()).intersection(
+                set(module.get_included_modules())
+            ):
+                instance.before_reload_included(module)
 
     @classmethod
-    def after_reload_module(cls, module: 'ModuleWrapperBase') -> None:
-        for instance in cls._modules_classes_instances[module.module].values():
-            instance.after_reload_module(module)
+    def after_reload_included(cls, module: 'ModuleWrapperBase') -> None:
+        for instance in cls._all_instances:
+            if set(instance.get_included_modules()).intersection(
+                set(module.get_included_modules())
+            ):
+                instance.after_reload_included(module)
 
 
 class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
     def __init__(self, module: ModuleType):
-        self.lock = RLock()  # wrapper lock
-        self.module_lock = Storage.get_lock(module)
+        self.lock = Storage.get_rlock(module)
         self.module = module
         self.path = Path(module.__file__).resolve()
         self.is_dir = self.path.name == '__init__.py'
@@ -104,21 +103,19 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
 
     @locked_method()
     def get_included_locks(self):
-        return set(Storage.get_lock(m) for m in self.get_included_modules())
+        return set(Storage.get_rlock(m) for m in self.get_included_modules())
 
     @locked_method()
-    @locked_method('module_lock')
     def locked_set(self, name: str, value: Any) -> None:
         setattr(self.module, name, value)
 
     @locked_method()
-    @locked_method('module_lock')
     def locked_get(self, name: str) -> Any:
         return getattr(self.module, name)
 
     @locked_method()
     def reload(self) -> None:
-        ModuleWrapperMeta.before_reload_module(self)
+        ModuleWrapperMeta.before_reload_included(self)
 
         locks = self.get_included_locks()
 
@@ -132,10 +129,10 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
             for l in locks:
                 l.release()
 
-        ModuleWrapperMeta.after_reload_module(self)
+        ModuleWrapperMeta.after_reload_included(self)
 
     @locked_method()
-    def before_reload_module(self, initiator: 'ModuleWrapperBase') -> None:
+    def before_reload_included(self, initiator: 'ModuleWrapperBase') -> None:
         """Called before do_reload() of this instance
         for all ModuleWrapperBase instances whose included_modules intersect
         with this instance's included_modules
@@ -150,7 +147,7 @@ class ModuleWrapperBase(metaclass=ModuleWrapperMeta):
         raise e
 
     @locked_method()
-    def after_reload_module(self, initiator: 'ModuleWrapperBase') -> None:
+    def after_reload_included(self, initiator: 'ModuleWrapperBase') -> None:
         """Called after do_reload() of this instance
         for all ModuleWrapperBase instances whose included_modules intersect
         with this instance's included_modules
@@ -196,7 +193,7 @@ class NewModuleAwarenessMixin:
         self._included_modules_obsolete = False
 
     @locked_method()
-    def before_reload_module(self, initiator: ModuleWrapperBase) -> None:
+    def before_reload_included(self, initiator: ModuleWrapperBase) -> None:
         self._included_modules_obsolete = True
 
     @locked_method()
@@ -276,7 +273,7 @@ class ModuleAttributeAccessor(metaclass=ModuleAttributeAccessorMeta):
     def __init__(self, module: T_mt_mwb_maa):
         module = extract_module(module)
         super().__setattr__('module', module)
-        super().__setattr__('lock', Storage.get_lock(module))
+        super().__setattr__('lock', Storage.get_rlock(module))
 
     def __getattribute__(self, name: str) -> Any:
         with super().__getattribute__('lock'):
