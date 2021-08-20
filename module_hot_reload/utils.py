@@ -1,5 +1,4 @@
 from pathlib import Path
-from threading import Lock
 from types import ModuleType
 
 
@@ -29,18 +28,5 @@ def locked_method(lock_attribute_name: str = 'lock'):
         def decorated(self, *args, **kwargs):
             with getattr(self, lock_attribute_name):
                 return func(self, *args, **kwargs)
-        return decorated
-    return decorator
-
-
-def optionally_locked_method(locked_default: bool = True, lock_attribute_name: str = 'lock'):
-    def decorator(func):
-        def decorated(self, *args, locked: bool = locked_default, **kwargs):
-            if locked:
-                getattr(self, lock_attribute_name).acquire()
-            res = func(self, *args, **kwargs)
-            if locked:
-                getattr(self, lock_attribute_name).release()
-            return res
         return decorated
     return decorator

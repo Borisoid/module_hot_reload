@@ -9,11 +9,12 @@ from watchdog.events import (
 )
 
 
-action = Callable[[], None]
+T_action = Callable[[], None]
+T_str_path = Union[str, Path]
 
 
 class FileModifiedHandler(FileSystemEventHandler):
-    def __init__(self, callback: action, file_path: Union[str, Path]):
+    def __init__(self, callback: T_action, file_path: T_str_path):
         self.file_path = str(file_path)
         self.callback = callback
         super().__init__()
@@ -27,7 +28,7 @@ class DirModifiedHandler(FileSystemEventHandler):
     """
     Reacts to modifications of .py files,
     """
-    def __init__(self, callback: action, dir_path: Union[str, Path]):
+    def __init__(self, callback: T_action, dir_path: T_str_path):
         self.dir_path = str(dir_path)
         self.callback = callback
         super().__init__()

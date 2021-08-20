@@ -1,7 +1,7 @@
 import importlib
 from collections import defaultdict
 from pathlib import Path
-from threading import Lock, RLock
+from threading import RLock
 from types import ModuleType
 from typing import Any, Dict, Sequence, Set, Union
 
@@ -12,6 +12,7 @@ T_a_rl = Dict[Any, RLock]
 T_mt_t_mwb = Dict[ModuleType, Dict[type, 'ModuleWrapperBase']]
 T_mt_aa = Dict[ModuleType, 'ModuleAttributeAccessor']
 T_mt_mwb_maa = Union[ModuleType, 'ModuleWrapperBase', 'ModuleAttributeAccessor']
+T_mwb_set = Set['ModuleWrapperBase']
 
 
 class Storage:
@@ -53,7 +54,7 @@ class ModuleWrapperMeta(type):
     Basically singleton but there is an instance per wrapped module.
     """
     _modules_classes_instances: T_mt_t_mwb = defaultdict(dict)
-    _all_instances: Set['ModuleWrapperBase'] = set()
+    _all_instances: T_mwb_set = set()
 
     def __call__(cls, module: T_mt_mwb_maa, *args, **kwargs) -> 'ModuleWrapperBase':
         module = extract_module(module)

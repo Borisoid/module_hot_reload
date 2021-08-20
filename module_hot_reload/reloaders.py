@@ -21,13 +21,15 @@ from .watchdog_handlers import (
 
 
 T_mt_mwb_maa = Union[ModuleType, ModuleWrapperBase, ModuleAttributeAccessor]
+T_mt_set = Set[ModuleType]
+T_mt_ow = Dict[ModuleType, ObservedWatch]
 
 
 class ReloaderBase:
     module_wrapper_class: ModuleWrapperBase = None
 
     def __init__(self):
-        self.registered_modules: Set[ModuleType] = set()
+        self.registered_modules: T_mt_set = set()
 
     def can_register(self, module: T_mt_mwb_maa, raise_exception: bool = False) -> bool:
         """
@@ -43,16 +45,16 @@ class ReloaderBase:
                 f'{module.module!s} is already registered'
             )
 
-            # for m in self.registered_modules:
-            #     duplicates: Set[ModuleType] = (
-            #         self.module_wrapper_class(m)
-            #         .get_included_modules()
-            #         .intersection(module.get_included_modules())
-            #     )
-            #     assert not duplicates, (
-            #         f'These modules are already registered: '
-            #         f'{list(map(str, duplicates))}'
-            #     )
+            included_modules = set(module.get_included_modules())
+            for m in self.registered_modules:
+                duplicates: T_mt_set = (
+                    set(self.module_wrapper_class(m).get_included_modules())
+                    .intersection(included_modules)
+                )
+                assert not duplicates, (
+                    f'These modules are already registered: '
+                    f'{list(map(str, duplicates))}'
+                )
 
             return True
 
@@ -75,7 +77,7 @@ class AutomaticReloaderMixin(ReloaderBase):
     def __init__(self):
         super().__init__()
         self.observer = Observer()
-        self.watches: Dict[ModuleType, ObservedWatch] = {}
+        self.watches: T_mt_ow = dict()
 
     def register(self, module: T_mt_mwb_maa) -> ModuleAttributeAccessor:
         module = self.module_wrapper_class(module)
