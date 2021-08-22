@@ -104,3 +104,33 @@ example = mw(example)
 example.reload()
 print(example.locked_get('e'))
 ```
+
+## How it works?
+
+Actual reloading of module(s) is done with `importlib.reload()` so reed the
+[docks](https://docs.python.org/3/library/importlib.html#importlib.reload)
+to learn about reloaded modules behaviour.
+
+Automatic reloaders use [watchdog](https://pypi.org/project/watchdog/)
+to watch file system events. It works with Windows as well as Linux.
+
+`ModuleWrapper`s and `ModuleAttributeAccessor`s use sort of `singleton pattern`
+but there is an instance of a particular class per wrapped module, so that
+
+```python
+from module_hot_reload.module_wrappers import (
+    ModuleAttributeAccessor,
+    NewModuleAwareAllModulesRecursiveStandardModuleWrapper,
+)
+
+import example
+
+
+maa_1 = ModuleAttributeAccessor(example)
+maa_2 = ModuleAttributeAccessor(example)
+w_1 = NewModuleAwareAllModulesRecursiveStandardModuleWrapper(example)
+w_2 = NewModuleAwareAllModulesRecursiveStandardModuleWrapper(example)
+
+print(maa_1 is maa_2)  # True
+print(w_1 is w_2)  # True
+```

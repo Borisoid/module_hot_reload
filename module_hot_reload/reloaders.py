@@ -73,7 +73,7 @@ class ReloaderBase:
 
 # Automatic Reloaders #########################################################
 
-class AutomaticReloaderMixin(ReloaderBase):
+class AutomaticReloaderBase(ReloaderBase):
     def __init__(self):
         super().__init__()
         self.observer = Observer()
@@ -120,13 +120,7 @@ class AutomaticReloaderMixin(ReloaderBase):
         self.observer.join(*args, **kwargs)
 
 
-class NewModuleUnawareAllModulesRecursiveAutomaticReloader(AutomaticReloaderMixin):
-    """
-    Watches registered modules and reloads them on change.
-    Does not keep track of modules added during it's work.
-    Reload is done via importlib.reload(), read about reloaded modules' behaveour in the docs.
-        https://docs.python.org/3/library/importlib.html#importlib.reload
-    """
+class NewModuleUnawareAllModulesRecursiveAutomaticReloader(AutomaticReloaderBase):
     module_wrapper_class: ModuleWrapperBase = \
         NewModuleUnawareAllModulesRecursiveStandardModuleWrapper
     file_handler = FileModifiedHandler
@@ -136,18 +130,12 @@ class NewModuleUnawareAllModulesRecursiveAutomaticReloader(AutomaticReloaderMixi
 class NewModuleAwareAllModulesRecursiveAutomaticReloader(
     NewModuleUnawareAllModulesRecursiveAutomaticReloader,
 ):
-    """
-    Watches registered modules and reloads them on change.
-    Keeps track of modules added during it's work.
-    Reload is done via importlib.reload(), read about reloaded modules' behaveour in the docs.
-        https://docs.python.org/3/library/importlib.html#importlib.reload
-    """
     module_wrapper_class: ModuleWrapperBase = \
         NewModuleAwareAllModulesRecursiveStandardModuleWrapper
     dir_handler = NewModuleAwareDirModifiedHandler
 
 
-class NewModuleUnawareDirModulesRecursiveAutomaticReloader(AutomaticReloaderMixin):
+class NewModuleUnawareDirModulesRecursiveAutomaticReloader(AutomaticReloaderBase):
     module_wrapper_class: ModuleWrapperBase = \
         NewModuleUnawareDirModulesRecursiveStandardModuleWrapper
     file_handler = FileModifiedHandler
@@ -164,7 +152,7 @@ class NewModuleAwareDirModulesRecursiveAutomaticReloader(
 
 # Manual Reloaders ############################################################
 
-class ManualReloaderMixin(ReloaderBase):
+class ManualReloaderBase(ReloaderBase):
     def register(self, module: T_mt_mwb_maa) -> ModuleAttributeAccessor:
         module = self.module_wrapper_class(module)
         self.can_register(module, raise_exception=True)
@@ -180,21 +168,21 @@ class ManualReloaderMixin(ReloaderBase):
             self.module_wrapper_class(m).reload()
 
 
-class NewModuleUnawareAllModulesRecursiveManualReloader(ManualReloaderMixin):
+class NewModuleUnawareAllModulesRecursiveManualReloader(ManualReloaderBase):
     module_wrapper_class: ModuleWrapperBase = \
         NewModuleUnawareAllModulesRecursiveStandardModuleWrapper
 
 
-class NewModuleAwareAllModulesRecursiveManualReloader(ManualReloaderMixin):
+class NewModuleAwareAllModulesRecursiveManualReloader(ManualReloaderBase):
     module_wrapper_class: ModuleWrapperBase = \
         NewModuleAwareAllModulesRecursiveStandardModuleWrapper
 
     
-class NewModuleUnawareDirModulesRecursiveManualReloader(ManualReloaderMixin):
+class NewModuleUnawareDirModulesRecursiveManualReloader(ManualReloaderBase):
     module_wrapper_class: ModuleWrapperBase = \
         NewModuleUnawareDirModulesRecursiveStandardModuleWrapper
 
 
-class NewModuleAwareDirModulesRecursiveManualReloader(ManualReloaderMixin):
+class NewModuleAwareDirModulesRecursiveManualReloader(ManualReloaderBase):
     module_wrapper_class: ModuleWrapperBase = \
         NewModuleAwareDirModulesRecursiveStandardModuleWrapper
